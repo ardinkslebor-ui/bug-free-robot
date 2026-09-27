@@ -1,0 +1,871 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Garmin Connect{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* ---------- Tone system: one class drives icon/badge colours ---------- */
+    .tone-indigo { --tone: #818cf8; --tone-rgb: 99, 102, 241;  --tone2-rgb: 6, 182, 212; }
+    .tone-cyan   { --tone: #22d3ee; --tone-rgb: 6, 182, 212;   --tone2-rgb: 99, 102, 241; }
+    .tone-orange { --tone: #fbbf24; --tone-rgb: 245, 158, 11;  --tone2-rgb: 239, 68, 68; }
+    .tone-green  { --tone: #34d399; --tone-rgb: 16, 185, 129;  --tone2-rgb: 6, 182, 212; }
+    .tone-purple { --tone: #c084fc; --tone-rgb: 139, 92, 246;  --tone2-rgb: 236, 72, 153; }
+    .tone-red    { --tone: #f87171; --tone-rgb: 239, 68, 68;   --tone2-rgb: 245, 158, 11; }
+    .tone-blue   { --tone: #60a5fa; --tone-rgb: 59, 130, 246;  --tone2-rgb: 139, 92, 246; }
+    .tone-muted  { --tone: #94a3b8; --tone-rgb: 100, 116, 139; --tone2-rgb: 71, 85, 105; }
+
+    .tone-icon {
+        background: linear-gradient(135deg, rgba(var(--tone-rgb), 0.2), rgba(var(--tone2-rgb), 0.15));
+        color: var(--tone);
+    }
+    .stat-icon-wrap.tone-icon { box-shadow: 0 4px 15px rgba(var(--tone-rgb), 0.2); }
+
+    /* ---------- Layout ---------- */
+    .dash-card { padding: 1.75rem; }
+    .dash-header { margin-bottom: 2.5rem; }
+    .welcome-icon {
+        width: 56px; height: 56px;
+        flex-shrink: 0;
+        border-radius: 16px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.4rem;
+        color: #fff;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        box-shadow: 0 6px 24px rgba(99, 102, 241, 0.35);
+    }
+    .today-date { color: var(--text-muted); font-size: 0.85rem; margin: 0.6rem 0 0; }
+    .card-head {
+        display: flex; flex-wrap: wrap; gap: 12px;
+        justify-content: space-between; align-items: center;
+        margin-bottom: 1.5rem;
+    }
+
+    /* ---------- Stat cards ---------- */
+    .stat-sub {
+        margin-top: 10px;
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        display: flex; align-items: center; gap: 6px;
+    }
+    .status-dot { font-size: 0.45rem; color: var(--tone); }
+    .meter {
+        height: 6px;
+        border-radius: 99px;
+        background: rgba(255, 255, 255, 0.06);
+        overflow: hidden;
+        margin-top: 12px;
+    }
+    .meter > span {
+        display: block;
+        height: 100%;
+        width: var(--value, 0%);
+        border-radius: inherit;
+        background: linear-gradient(90deg, rgba(var(--tone-rgb), 0.85), var(--tone));
+        box-shadow: 0 0 12px rgba(var(--tone-rgb), 0.5);
+        transform-origin: left center;
+        animation: meterGrow 1.2s var(--ease) 0.4s both;
+    }
+    @keyframes meterGrow { from { transform: scaleX(0); } }
+
+    /* ---------- Chart ---------- */
+    .legend-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+    .legend-chip {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 6px 12px;
+        border-radius: 99px;
+        border: 1px solid var(--border-glass);
+        background: var(--bg-subtle);
+        color: var(--text-secondary);
+        font-size: 0.8rem; font-weight: 500;
+        cursor: pointer;
+        transition: opacity 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+    }
+    .legend-chip:hover { border-color: var(--border-glow); color: var(--text-primary); }
+    .legend-chip[aria-pressed="false"] { opacity: 0.45; }
+    .legend-chip[aria-pressed="false"] .legend-dot { background: transparent !important; box-shadow: inset 0 0 0 2px currentColor; }
+    .legend-chip:disabled { cursor: default; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    .legend-dot.steps { background: var(--primary); }
+    .legend-dot.calories { background: var(--accent); }
+
+    .chart-wrap { position: relative; height: 300px; }
+    .chart-wrap canvas { transition: opacity 0.3s ease; }
+    .chart-wrap:not([data-state="ready"]) canvas { opacity: 0; }
+    .chart-state {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 12px;
+        text-align: center;
+        padding: 1rem;
+        color: var(--text-muted);
+        font-size: 0.92rem;
+    }
+    .chart-state[hidden] { display: none; }
+    html:not(.js) .chart-state[data-state="loading"] { display: none; }
+    .chart-state .state-icon {
+        width: 56px; height: 56px;
+        border-radius: 16px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.3rem;
+    }
+    .chart-spinner {
+        width: 40px; height: 40px;
+        border-radius: 50%;
+        border: 3px solid rgba(255, 255, 255, 0.08);
+        border-top-color: var(--primary-light);
+        border-right-color: var(--accent);
+        animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .skeleton-bars {
+        position: absolute; left: 1rem; right: 1rem; bottom: 1rem;
+        height: 45%;
+        display: flex; align-items: flex-end; gap: 6%;
+        opacity: 0.35;
+        pointer-events: none;
+    }
+    .skeleton-bars span {
+        flex: 1;
+        border-radius: 8px 8px 0 0;
+        background: linear-gradient(180deg, rgba(99, 102, 241, 0.35), rgba(99, 102, 241, 0.02));
+        animation: skeletonPulse 1.4s ease-in-out infinite;
+    }
+    .skeleton-bars span:nth-child(odd) { animation-delay: 0.2s; }
+    @keyframes skeletonPulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+    .btn-retry {
+        border: 1px solid var(--border-glow);
+        background: rgba(99, 102, 241, 0.12);
+        color: var(--primary-light);
+        border-radius: 12px;
+        padding: 8px 18px;
+        font-weight: 600;
+        font-size: 0.85rem;
+    }
+    .btn-retry:hover { background: rgba(99, 102, 241, 0.22); color: var(--text-primary); }
+
+    .chart-summary {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 1.25rem;
+    }
+    .chart-summary[hidden] { display: none; }
+    .summary-item {
+        background: var(--bg-subtle);
+        border: 1px solid var(--border-glass);
+        border-radius: var(--radius-md);
+        padding: 12px 14px;
+        min-width: 0;
+    }
+    .summary-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600; }
+    .summary-value {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 1.15rem;
+        margin-top: 2px;
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+    }
+    .summary-unit { font-size: 0.75em; font-weight: 500; color: var(--text-secondary); margin-left: 3px; }
+
+    /* ---------- Profile ---------- */
+    .profile-name { font-weight: 600; color: var(--text-primary); }
+    .profile-email { color: var(--text-muted); word-break: break-all; }
+    .info-row {
+        display: flex; justify-content: space-between; align-items: center;
+        gap: 12px;
+        padding: 0.55rem 0;
+    }
+    .info-row + .info-row { border-top: 1px dashed rgba(255, 255, 255, 0.05); }
+    .info-label { color: var(--text-muted); white-space: nowrap; }
+    .info-label i { color: var(--primary-light); width: 1.25em; text-align: center; }
+    .info-value { font-weight: 500; text-align: right; min-width: 0; overflow-wrap: anywhere; }
+    .info-value.mono { font-family: var(--font-display), monospace; }
+    .role-badge {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(139, 92, 246, 0.15));
+        color: var(--info-light);
+        padding: 6px 14px;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 0.8rem;
+    }
+
+    /* ---------- Goal ring ---------- */
+    .goal-body { display: flex; align-items: center; gap: 1.5rem; }
+    .goal-ring { position: relative; width: 148px; height: 148px; flex-shrink: 0; }
+    .goal-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+    .goal-ring .ring-track { stroke: rgba(255, 255, 255, 0.06); }
+    .goal-ring .ring-progress {
+        stroke: url(#goalGradient);
+        stroke-linecap: round;
+        filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.45));
+        animation: ringFill 1.6s var(--ease) 0.3s both;
+    }
+    @keyframes ringFill { from { stroke-dashoffset: var(--circ); } }
+    .goal-center {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        text-align: center;
+    }
+    .goal-pct { font-family: var(--font-display); font-weight: 700; font-size: 1.9rem; line-height: 1; }
+    .goal-pct small { font-size: 0.9rem; color: var(--text-secondary); margin-left: 1px; }
+    .goal-caption { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+    .goal-stats { flex: 1; min-width: 0; display: grid; gap: 10px; }
+    .goal-stat-label { font-size: 0.78rem; color: var(--text-muted); }
+    .goal-stat-value { font-family: var(--font-display); font-weight: 600; font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+    .goal-note {
+        display: inline-flex; align-items: center; gap: 8px;
+        font-size: 0.82rem; font-weight: 600;
+        padding: 6px 12px; border-radius: 10px;
+        background: rgba(var(--tone-rgb), 0.12);
+        color: var(--tone);
+    }
+
+    /* ---------- Recent activity ---------- */
+    .activity-item { gap: 12px; }
+    .activity-icon {
+        width: 44px; height: 44px;
+        flex-shrink: 0;
+        border-radius: 12px;
+        display: flex; align-items: center; justify-content: center;
+    }
+    .activity-title { font-weight: 600; color: var(--text-primary); }
+    .activity-detail { color: var(--text-muted); }
+    .time-badge {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text-muted);
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-size: 0.78rem;
+        font-weight: 500;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+    .empty-state { text-align: center; padding: 2rem 1rem; color: var(--text-muted); }
+    .empty-state i { font-size: 1.6rem; margin-bottom: 0.5rem; display: block; opacity: 0.6; }
+
+    @media (max-width: 768px) {
+        .dash-header { margin-bottom: 1.75rem; }
+        .welcome-icon { width: 46px; height: 46px; font-size: 1.1rem; border-radius: 14px; }
+        .chart-wrap { height: 240px; }
+        .summary-value { font-size: 1rem; }
+        .goal-ring { width: 124px; height: 124px; }
+        .goal-pct { font-size: 1.6rem; }
+        .list-group-item { padding: 14px 4px; }
+    }
+    @media (max-width: 400px) {
+        .chart-summary { gap: 8px; }
+        .summary-item { padding: 10px; }
+        .goal-body { gap: 1rem; }
+        .time-badge { padding: 5px 8px; font-size: 0.72rem; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .chart-spinner { animation: none; border-top-color: var(--primary-light); }
+        .skeleton-bars span { animation: none; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{#- ---------- Helpers & safe values ---------- -#}
+{%- macro fmt_num(n) -%}
+    {%- if n is none -%}-{%- else -%}{{ '{:,.0f}'.format(n)|replace(',', '.') }}{%- endif -%}
+{%- endmacro -%}
+{%- macro fa(icon) -%}
+    {%- set icon = (icon or 'fa-circle')|string|trim -%}
+    {%- if ' ' in icon -%}{{ icon }}{%- elif icon.startswith('fa-') -%}fas {{ icon }}{%- else -%}fas fa-{{ icon }}{%- endif -%}
+{%- endmacro -%}
+
+{%- set full_name = info.full_name|default('', true)|string|trim -%}
+{%- set initial = (full_name[:1] or 'U')|upper -%}
+{%- set steps_val = info.steps|default(none)|float(none) -%}
+{%- set battery_val = info.battery|default(none)|float(none) -%}
+{%- set step_goal = info.step_goal|default(10000, true)|int(10000) -%}
+{%- if step_goal <= 0 %}{% set step_goal = 10000 %}{% endif -%}
+
+{#- Step goal progress -#}
+{%- set goal_pct = ((steps_val / step_goal) * 100) if steps_val is not none else none -%}
+{%- set ring_pct = [[goal_pct or 0, 0]|max, 100]|min -%}
+{%- set ring_circ = 339.292 -%}
+{%- set ring_offset = ring_circ * (1 - ring_pct / 100) -%}
+{%- set steps_left = [step_goal - (steps_val or 0), 0]|max -%}
+
+{#- Battery level → tone + icon -#}
+{%- if battery_val is none -%}
+    {%- set bat_tone, bat_icon, bat_text = 'muted', 'fa-battery-empty', 'Tidak diketahui' -%}
+{%- else -%}
+    {%- set bat_level = [[battery_val, 0]|max, 100]|min -%}
+    {%- if bat_level >= 50 -%}{%- set bat_tone, bat_text = 'green', 'Baik' -%}
+    {%- elif bat_level >= 20 -%}{%- set bat_tone, bat_text = 'orange', 'Sedang' -%}
+    {%- else -%}{%- set bat_tone, bat_text = 'red', 'Lemah – segera isi daya' -%}{%- endif -%}
+    {%- if bat_level >= 88 -%}{%- set bat_icon = 'fa-battery-full' -%}
+    {%- elif bat_level >= 63 -%}{%- set bat_icon = 'fa-battery-three-quarters' -%}
+    {%- elif bat_level >= 38 -%}{%- set bat_icon = 'fa-battery-half' -%}
+    {%- elif bat_level >= 13 -%}{%- set bat_icon = 'fa-battery-quarter' -%}
+    {%- else -%}{%- set bat_icon = 'fa-battery-empty' -%}{%- endif -%}
+{%- endif %}
+
+<div class="container py-4">
+    <!-- Welcome Header -->
+    <section class="row align-items-center dash-header fade-in-up" aria-labelledby="welcomeTitle">
+        <div class="col-lg-8">
+            <div class="d-flex align-items-center gap-3">
+                <div class="welcome-icon" aria-hidden="true">
+                    <i class="fas fa-wave-square"></i>
+                </div>
+                <div class="min-w-0">
+                    <h1 class="section-title mb-0" id="welcomeTitle">
+                        Selamat Datang, <span class="glow-text">{{ full_name or 'User' }}</span>!
+                    </h1>
+                    <p class="section-subtitle mb-0">Pantau aktivitas dan kesehatan Anda secara real-time.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4 text-lg-end mt-3 mt-lg-0">
+            <span class="badge-glow" role="status">
+                <span class="pulse" aria-hidden="true"></span> Online
+            </span>
+            <p class="today-date" id="todayDate" hidden></p>
+        </div>
+    </section>
+
+    <!-- Stat Cards -->
+    <h2 class="visually-hidden">Ringkasan</h2>
+    <div class="row g-3 g-md-4 mb-4">
+        {% set stats = [
+            {'value': info.devices,    'label': 'Devices',    'icon': 'fa-tablet-alt', 'tone': 'indigo', 'card': ''},
+            {'value': info.activities, 'label': 'Activities', 'icon': 'fa-running',    'tone': 'orange', 'card': 'variant-orange'},
+            {'value': info.steps,      'label': 'Steps',      'icon': 'fa-walking',    'tone': 'green',  'card': 'variant-green'},
+            {'value': info.battery,    'label': 'Battery %',  'icon': bat_icon,        'tone': bat_tone, 'card': 'variant-purple', 'battery': true}
+        ] %}
+        {% for s in stats %}
+            {% set num = s.value|default(none)|float(none) %}
+            <div class="col-6 col-md-3 fade-in-up delay-{{ loop.index }}">
+                <div class="stat-card {{ s.card }}">
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <div class="min-w-0">
+                            <div class="stat-number" data-count="{{ num if num is not none else '' }}">{{ fmt_num(num) }}</div>
+                            <div class="stat-label">{{ s.label }}</div>
+                        </div>
+                        <div class="stat-icon-wrap tone-icon tone-{{ s.tone }}" aria-hidden="true">
+                            <i class="fas {{ s.icon }}"></i>
+                        </div>
+                    </div>
+                    {% if s.battery %}
+                        <div class="meter tone-{{ bat_tone }}" role="meter" aria-label="Level baterai"
+                             aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ bat_level|round|int if battery_val is not none else 0 }}"
+                             aria-valuetext="{{ (bat_level|round|int ~ '% – ' ~ bat_text) if battery_val is not none else bat_text }}">
+                            <span style="--value: {{ bat_level if battery_val is not none else 0 }}%"></span>
+                        </div>
+                        <div class="stat-sub tone-{{ bat_tone }}">
+                            <i class="fas fa-circle status-dot" aria-hidden="true"></i>{{ bat_text }}
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        {% endfor %}
+    </div>
+
+    <!-- Chart + Profile -->
+    <div class="row g-4">
+        <div class="col-lg-8 fade-in-up delay-2">
+            <section class="card card-premium dash-card h-100" aria-labelledby="chartTitle">
+                <div class="card-head">
+                    <h2 class="card-title mb-0" id="chartTitle">
+                        <span class="title-icon tone-icon tone-indigo" aria-hidden="true"><i class="fas fa-chart-line"></i></span>
+                        Aktivitas 7 Hari Terakhir
+                    </h2>
+                    <div class="legend-chips" role="group" aria-label="Tampilkan data">
+                        <button type="button" class="legend-chip" data-dataset="0" aria-pressed="true" disabled>
+                            <span class="legend-dot steps" aria-hidden="true"></span> Langkah
+                        </button>
+                        <button type="button" class="legend-chip" data-dataset="1" aria-pressed="true" disabled>
+                            <span class="legend-dot calories" aria-hidden="true"></span> Kalori
+                        </button>
+                    </div>
+                </div>
+
+                <div class="chart-wrap" id="chartWrap" data-state="loading" aria-busy="true">
+                    <canvas id="activityChart" role="img" aria-label="Grafik langkah dan kalori 7 hari terakhir"></canvas>
+
+                    <div class="chart-state" data-state="loading" role="status">
+                        <div class="skeleton-bars" aria-hidden="true">
+                            <span style="height:45%"></span><span style="height:70%"></span><span style="height:55%"></span>
+                            <span style="height:85%"></span><span style="height:60%"></span><span style="height:75%"></span><span style="height:50%"></span>
+                        </div>
+                        <div class="chart-spinner" aria-hidden="true"></div>
+                        <span>Memuat data aktivitas…</span>
+                    </div>
+                    <noscript>
+                        <div class="chart-state">
+                            <div class="state-icon tone-icon tone-muted" aria-hidden="true"><i class="fas fa-code"></i></div>
+                            <span>Aktifkan JavaScript untuk menampilkan grafik.</span>
+                        </div>
+                    </noscript>
+                    <div class="chart-state" data-state="empty" hidden>
+                        <div class="state-icon tone-icon tone-indigo" aria-hidden="true"><i class="fas fa-chart-area"></i></div>
+                        <span>Belum ada data aktivitas untuk 7 hari terakhir.</span>
+                    </div>
+                    <div class="chart-state" data-state="error" role="alert" hidden>
+                        <div class="state-icon tone-icon tone-red" aria-hidden="true"><i class="fas fa-triangle-exclamation"></i></div>
+                        <span class="chart-error-msg">Gagal memuat data grafik.</span>
+                        <button type="button" class="btn btn-retry" id="chartRetry">
+                            <i class="fas fa-rotate-right me-1" aria-hidden="true"></i> Coba lagi
+                        </button>
+                    </div>
+                </div>
+
+                <dl class="chart-summary mb-0" id="chartSummary" hidden>
+                    <div class="summary-item">
+                        <dt class="summary-label">Total Langkah</dt>
+                        <dd class="summary-value mb-0" data-summary="steps">-</dd>
+                    </div>
+                    <div class="summary-item">
+                        <dt class="summary-label">Rata-rata / Hari</dt>
+                        <dd class="summary-value mb-0" data-summary="avg">-</dd>
+                    </div>
+                    <div class="summary-item">
+                        <dt class="summary-label">Total Kalori</dt>
+                        <dd class="summary-value mb-0" data-summary="calories">-</dd>
+                    </div>
+                </dl>
+            </section>
+        </div>
+
+        <!-- Profile Card -->
+        <div class="col-lg-4 fade-in-up delay-3">
+            <section class="card card-premium dash-card h-100" aria-labelledby="profileTitle">
+                <h2 class="card-title mb-4" id="profileTitle">
+                    <span class="title-icon tone-icon tone-purple" aria-hidden="true"><i class="fas fa-user-circle"></i></span>
+                    Profil
+                </h2>
+                <div class="d-flex align-items-center mb-2">
+                    <div class="avatar-lg me-3" aria-hidden="true">{{ initial }}</div>
+                    <div class="min-w-0">
+                        <h3 class="h6 mb-1 profile-name">{{ full_name or 'User' }}</h3>
+                        {% if info.email %}
+                            <small class="profile-email">{{ info.email }}</small>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="divider"></div>
+                <div class="profile-info">
+                    <div class="info-row">
+                        <span class="info-label"><i class="fas fa-phone me-2" aria-hidden="true"></i>Phone</span>
+                        <span class="info-value">{{ info.phone or '-' }}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label"><i class="fas fa-id-badge me-2" aria-hidden="true"></i>User ID</span>
+                        <span class="info-value mono">{{ info.user_id if info.user_id is not none and info.user_id is defined else '-' }}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label"><i class="fas fa-shield-alt me-2" aria-hidden="true"></i>Role</span>
+                        <span class="badge role-badge">{{ session.get('role', 'user')|title }}</span>
+                    </div>
+                </div>
+                <div class="divider"></div>
+                <a href="{{ url_for('logout') }}" class="btn btn-outline-danger w-100 mt-auto">
+                    <i class="fas fa-sign-out-alt me-2" aria-hidden="true"></i> Logout
+                </a>
+            </section>
+        </div>
+    </div>
+
+    <!-- Goal + Recent Activity -->
+    <div class="row g-4 mt-0">
+        <div class="col-lg-4 fade-in-up delay-2">
+            <section class="card card-premium dash-card h-100" aria-labelledby="goalTitle">
+                <h2 class="card-title mb-4" id="goalTitle">
+                    <span class="title-icon tone-icon tone-green" aria-hidden="true"><i class="fas fa-bullseye"></i></span>
+                    Target Harian
+                </h2>
+                <div class="goal-body">
+                    <div class="goal-ring" role="progressbar" aria-label="Progres target langkah harian"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ ring_pct|round|int }}"
+                         aria-valuetext="{{ fmt_num(steps_val) }} dari {{ fmt_num(step_goal) }} langkah">
+                        <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
+                            <defs>
+                                <linearGradient id="goalGradient" x1="0" y1="0" x2="1" y2="1">
+                                    <stop offset="0%" stop-color="#10b981"/>
+                                    <stop offset="100%" stop-color="#06b6d4"/>
+                                </linearGradient>
+                            </defs>
+                            <circle class="ring-track" cx="60" cy="60" r="54" fill="none" stroke-width="10"/>
+                            <circle class="ring-progress" cx="60" cy="60" r="54" fill="none" stroke-width="10"
+                                    stroke-dasharray="{{ ring_circ }}" stroke-dashoffset="{{ '%.2f'|format(ring_offset) }}"
+                                    style="--circ: {{ ring_circ }}"
+                                    {% if ring_pct <= 0 %}visibility="hidden"{% endif %}/>
+                        </svg>
+                        <div class="goal-center">
+                            <div class="goal-pct">{% if goal_pct is not none %}{{ goal_pct|round|int }}<small>%</small>{% else %}-{% endif %}</div>
+                            <div class="goal-caption">tercapai</div>
+                        </div>
+                    </div>
+                    <div class="goal-stats">
+                        <div>
+                            <div class="goal-stat-label">Langkah hari ini</div>
+                            <div class="goal-stat-value">{{ fmt_num(steps_val) }}</div>
+                        </div>
+                        <div>
+                            <div class="goal-stat-label">Target</div>
+                            <div class="goal-stat-value">{{ fmt_num(step_goal) }}</div>
+                        </div>
+                        <div>
+                            {% if steps_val is none %}
+                                <span class="goal-note tone-muted"><i class="fas fa-circle-question" aria-hidden="true"></i> Data belum tersedia</span>
+                            {% elif steps_left <= 0 %}
+                                <span class="goal-note tone-green"><i class="fas fa-trophy" aria-hidden="true"></i> Target tercapai!</span>
+                            {% else %}
+                                <span class="goal-note tone-cyan"><i class="fas fa-shoe-prints" aria-hidden="true"></i> {{ fmt_num(steps_left) }} langkah lagi</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <div class="col-lg-8 fade-in-up delay-3">
+            <section class="card card-premium dash-card h-100" aria-labelledby="recentTitle">
+                <h2 class="card-title mb-3" id="recentTitle">
+                    <span class="title-icon tone-icon tone-green" aria-hidden="true"><i class="fas fa-clock"></i></span>
+                    Aktivitas Terbaru
+                </h2>
+                {% set default_activities = [
+                    {'icon': 'fa-walking',   'title': 'Jalan pagi',            'detail': '5.240 langkah',    'time': '2 jam lalu',  'color': 'green'},
+                    {'icon': 'fa-heartbeat', 'title': 'Detak jantung terukur', 'detail': '72 BPM rata-rata', 'time': '5 jam lalu',  'color': 'red'},
+                    {'icon': 'fa-bed',       'title': 'Tidur malam',           'detail': '7 jam 32 menit',   'time': '12 jam lalu', 'color': 'blue'}
+                ] %}
+                {% set tone_alias = {'success': 'green', 'danger': 'red', 'info': 'blue', 'warning': 'orange', 'primary': 'indigo', 'yellow': 'orange'} %}
+                {% set tone_names = ['indigo', 'cyan', 'orange', 'green', 'purple', 'red', 'blue', 'muted'] %}
+                {% set activity_items = recent_activities if (recent_activities is defined and recent_activities is not none) else default_activities %}
+
+                {% if activity_items %}
+                    <ul class="list-group list-group-flush">
+                        {% for a in activity_items %}
+                            {% set raw_tone = (a.color or a.variant or 'indigo')|string|lower %}
+                            {% set tone = tone_alias.get(raw_tone, raw_tone) %}
+                            {% if tone not in tone_names %}{% set tone = 'indigo' %}{% endif %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center activity-item">
+                                <div class="d-flex align-items-center gap-3 min-w-0">
+                                    <div class="activity-icon tone-icon tone-{{ tone }}" aria-hidden="true">
+                                        <i class="{{ fa(a.icon) }}"></i>
+                                    </div>
+                                    <div class="min-w-0">
+                                        <div class="activity-title">{{ a.title or '-' }}</div>
+                                        {% if a.detail %}<small class="activity-detail">{{ a.detail }}</small>{% endif %}
+                                    </div>
+                                </div>
+                                {% if a.time %}
+                                    <span class="badge time-badge">
+                                        <i class="far fa-clock me-1" aria-hidden="true"></i> {{ a.time }}
+                                    </span>
+                                {% endif %}
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <div class="empty-state">
+                        <i class="fas fa-inbox" aria-hidden="true"></i>
+                        Belum ada aktivitas terbaru.
+                    </div>
+                {% endif %}
+            </section>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    'use strict';
+
+    var API_URL = '/api/dashboard_stats';
+    var reduceMotion = (window.GC && window.GC.reduceMotion) ||
+        (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    var nf = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
+    var nfCompact = new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 });
+
+    /** Parse anything the backend might send (number, "1234", None, "") into a finite number or null. */
+    function toNum(v) {
+        if (v === null || v === undefined || typeof v === 'boolean') return null;
+        if (typeof v === 'number') return isFinite(v) ? v : null;
+        var s = String(v).trim();
+        if (!s || /^(none|null|nan|undefined)$/i.test(s)) return null;
+        var n = Number(s);
+        return isFinite(n) ? n : null;
+    }
+    function fmt(v) { var n = toNum(v); return n === null ? '-' : nf.format(Math.round(n)); }
+
+    /* ---------- Today's date (id-ID) ---------- */
+    var dateEl = document.getElementById('todayDate');
+    if (dateEl) {
+        try {
+            dateEl.textContent = new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+            dateEl.hidden = false;
+        } catch (e) { /* leave hidden */ }
+    }
+
+    /* ---------- Counter animation ---------- */
+    function animateCounter(el, target) {
+        var duration = 1600, start = null;
+        var ease = function (t) { return 1 - Math.pow(1 - t, 3); };
+        function frame(ts) {
+            if (start === null) start = ts;
+            var p = Math.min((ts - start) / duration, 1);
+            el.textContent = nf.format(Math.round(target * ease(p)));
+            if (p < 1) window.requestAnimationFrame(frame);
+        }
+        window.requestAnimationFrame(frame);
+    }
+
+    var counters = document.querySelectorAll('.stat-number[data-count]');
+    var canObserve = 'IntersectionObserver' in window;
+    var counterObserver = (!reduceMotion && canObserve) ? new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+            if (!entry.isIntersecting) return;
+            counterObserver.unobserve(entry.target);
+            animateCounter(entry.target, toNum(entry.target.getAttribute('data-count')));
+        });
+    }, { threshold: 0.5 }) : null;
+
+    Array.prototype.forEach.call(counters, function (el) {
+        var target = toNum(el.getAttribute('data-count'));
+        if (target === null) { el.textContent = '-'; return; }
+        if (!counterObserver || target === 0) { el.textContent = fmt(target); return; }
+        el.textContent = '0';
+        counterObserver.observe(el);
+    });
+
+    /* ---------- Chart ---------- */
+    var wrap = document.getElementById('chartWrap');
+    var canvas = document.getElementById('activityChart');
+    if (!wrap || !canvas) return;
+
+    var states = wrap.querySelectorAll('.chart-state');
+    var summary = document.getElementById('chartSummary');
+    var legendBtns = document.querySelectorAll('.legend-chip[data-dataset]');
+    var retryBtn = document.getElementById('chartRetry');
+    var chart = null;
+
+    function setState(name, message) {
+        wrap.setAttribute('data-state', name);
+        wrap.setAttribute('aria-busy', name === 'loading' ? 'true' : 'false');
+        Array.prototype.forEach.call(states, function (el) { el.hidden = el.getAttribute('data-state') !== name; });
+        if (name === 'error') {
+            var msg = wrap.querySelector('.chart-error-msg');
+            if (msg) msg.textContent = message || 'Gagal memuat data grafik.';
+        }
+        if (summary && name !== 'ready') summary.hidden = true;
+        Array.prototype.forEach.call(legendBtns, function (b) { b.disabled = name !== 'ready'; });
+    }
+
+    function formatLabel(label) {
+        var s = String(label == null ? '' : label);
+        var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+        if (!m) return s;
+        var d = new Date(+m[1], +m[2] - 1, +m[3]);
+        return isNaN(d) ? s : d.toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' });
+    }
+
+    function normalize(data) {
+        if (!data || !Array.isArray(data.dates) || !data.dates.length) return null;
+        var len = data.dates.length;
+        var pick = function (arr) {
+            arr = Array.isArray(arr) ? arr : [];
+            var out = [];
+            for (var i = 0; i < len; i++) out.push(toNum(arr[i]));
+            return out;
+        };
+        var steps = pick(data.steps), calories = pick(data.calories);
+        var hasValue = function (v) { return v !== null; };
+        if (!steps.some(hasValue) && !calories.some(hasValue)) return null;
+        return { labels: data.dates.map(formatLabel), steps: steps, calories: calories };
+    }
+
+    function sum(arr) { return arr.reduce(function (a, v) { return a + (v || 0); }, 0); }
+
+    function gradient(rgb) {
+        return function (ctx) {
+            var c = ctx.chart, area = c.chartArea;
+            if (!area) return 'rgba(' + rgb + ', 0.1)';
+            var g = c.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+            g.addColorStop(0, 'rgba(' + rgb + ', 0.28)');
+            g.addColorStop(1, 'rgba(' + rgb + ', 0.01)');
+            return g;
+        };
+    }
+
+    function dataset(label, values, color, hover, rgb, axis) {
+        return {
+            label: label,
+            data: values,
+            yAxisID: axis,
+            borderColor: color,
+            backgroundColor: gradient(rgb),
+            fill: true,
+            tension: 0.4,
+            spanGaps: true,
+            borderWidth: 3,
+            pointBackgroundColor: color,
+            pointBorderColor: '#0a0e1a',
+            pointBorderWidth: 2,
+            pointRadius: function (ctx) { return ctx.chart.width < 480 ? 3 : 5; },
+            pointHoverRadius: 8,
+            pointHoverBackgroundColor: hover,
+            pointHoverBorderColor: '#0a0e1a',
+            pointHoverBorderWidth: 3
+        };
+    }
+
+    function render(d) {
+        if (chart) { chart.destroy(); chart = null; }
+
+        Chart.defaults.font.family = "'Inter', sans-serif";
+        Chart.defaults.color = '#7c8aa0';
+
+        var tickFont = { family: "'Inter', sans-serif", size: 11 };
+        var grid = { color: 'rgba(255, 255, 255, 0.04)' };
+
+        chart = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: d.labels,
+                datasets: [
+                    dataset('Langkah', d.steps, '#6366f1', '#818cf8', '99, 102, 241', 'y'),
+                    dataset('Kalori', d.calories, '#06b6d4', '#22d3ee', '6, 182, 212', 'y1')
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                animation: reduceMotion ? false : { duration: 1200, easing: 'easeOutQuart' },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                        titleColor: '#f1f5f9',
+                        bodyColor: '#cbd5e1',
+                        borderColor: 'rgba(255, 255, 255, 0.1)',
+                        borderWidth: 1,
+                        cornerRadius: 12,
+                        padding: 14,
+                        boxPadding: 6,
+                        usePointStyle: true,
+                        callbacks: {
+                            label: function (ctx) {
+                                var unit = ctx.dataset.yAxisID === 'y1' ? ' kkal' : ' langkah';
+                                return ' ' + ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmt(ctx.parsed.y) + unit);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: grid,
+                        border: { display: false },
+                        ticks: { font: tickFont, maxRotation: 0, autoSkipPadding: 12 }
+                    },
+                    y: {
+                        type: 'linear',
+                        position: 'left',
+                        display: 'auto',
+                        beginAtZero: true,
+                        grid: grid,
+                        border: { display: false },
+                        title: { display: true, text: 'Langkah', color: '#818cf8', font: { size: 10, weight: '600' } },
+                        ticks: { font: tickFont, color: '#818cf8', maxTicksLimit: 6, callback: function (v) { return nfCompact.format(v); } }
+                    },
+                    y1: {
+                        type: 'linear',
+                        position: 'right',
+                        display: 'auto',
+                        beginAtZero: true,
+                        grid: { drawOnChartArea: false },
+                        border: { display: false },
+                        title: { display: true, text: 'kkal', color: '#22d3ee', font: { size: 10, weight: '600' } },
+                        ticks: { font: tickFont, color: '#22d3ee', maxTicksLimit: 6, callback: function (v) { return nfCompact.format(v); } }
+                    }
+                }
+            }
+        });
+
+        // Summary + accessible description
+        var totalSteps = sum(d.steps), totalCal = sum(d.calories);
+        var days = d.steps.filter(function (v) { return v !== null; }).length || 1;
+        if (summary) {
+            summary.querySelector('[data-summary="steps"]').textContent = fmt(totalSteps);
+            summary.querySelector('[data-summary="avg"]').textContent = fmt(totalSteps / days);
+            var calEl = summary.querySelector('[data-summary="calories"]');
+            var unit = document.createElement('span');
+            unit.className = 'summary-unit';
+            unit.textContent = 'kkal';
+            calEl.textContent = fmt(totalCal);
+            calEl.appendChild(unit);
+            summary.hidden = false;
+        }
+        canvas.setAttribute('aria-label', 'Grafik ' + d.labels.length + ' hari terakhir: total ' +
+            fmt(totalSteps) + ' langkah dan ' + fmt(totalCal) + ' kkal.');
+
+        Array.prototype.forEach.call(legendBtns, function (b) { b.setAttribute('aria-pressed', 'true'); });
+    }
+
+    function load() {
+        setState('loading');
+        if (typeof window.Chart === 'undefined') {
+            setState('error', 'Library grafik tidak dapat dimuat. Periksa koneksi Anda.');
+            return;
+        }
+        var controller = ('AbortController' in window) ? new AbortController() : null;
+        var timer = setTimeout(function () { if (controller) controller.abort(); }, 10000);
+
+        fetch(API_URL, {
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin',
+            cache: 'no-store',
+            signal: controller ? controller.signal : undefined
+        })
+            .then(function (res) {
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.json();
+            })
+            .then(function (data) {
+                clearTimeout(timer);
+                var d = normalize(data);
+                if (!d) { setState('empty'); return; }
+                setState('ready');
+                render(d);
+            })
+            .catch(function (err) {
+                clearTimeout(timer);
+                console.error('Error loading chart:', err);
+                setState('error', err && err.name === 'AbortError'
+                    ? 'Waktu permintaan habis. Silakan coba lagi.'
+                    : 'Gagal memuat data grafik.');
+            });
+    }
+
+    Array.prototype.forEach.call(legendBtns, function (btn) {
+        btn.addEventListener('click', function () {
+            if (!chart) return;
+            var i = +btn.getAttribute('data-dataset');
+            var visible = chart.isDatasetVisible(i);
+            // Keep at least one dataset visible
+            if (visible && chart.getVisibleDatasetCount() <= 1) return;
+            chart.setDatasetVisibility(i, !visible);
+            btn.setAttribute('aria-pressed', String(!visible));
+            chart.update();
+        });
+    });
+    if (retryBtn) retryBtn.addEventListener('click', load);
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', load);
+    } else {
+        load();
+    }
+})();
+</script>
+{% endblock %}
